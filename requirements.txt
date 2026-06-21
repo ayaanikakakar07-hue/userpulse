@@ -1,0 +1,4 @@
+flask
+textblob
+nltk
+gunicorn
