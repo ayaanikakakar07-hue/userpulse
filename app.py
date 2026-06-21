@@ -15,6 +15,29 @@ app = Flask(__name__)
 stop_words = set(stopwords.words('english'))
 lemmatizer = WordNetLemmatizer()
 
+# Pain point theme taxonomy
+PAIN_THEMES = {
+    'Crashes & Bugs':      ['crash', 'bug', 'freeze', 'error', 'broken', 'glitch', 'fix', 'issue', 'problem', 'malfunction'],
+    'Performance':         ['slow', 'lag', 'load', 'loading', 'battery', 'drain', 'speed', 'fast', 'quick', 'delay'],
+    'Ads & Monetisation':  ['ad', 'ads', 'advertisement', 'commercial', 'popup', 'banner', 'paid', 'subscription', 'money'],
+    'Algorithm & Content': ['algorithm', 'fyp', 'feed', 'recommend', 'content', 'video', 'trending', 'discover', 'show', 'watch'],
+    'UI & Design':         ['interface', 'ui', 'design', 'layout', 'button', 'navigation', 'update', 'new', 'old', 'look'],
+    'Notifications':       ['notification', 'notify', 'alert', 'push', 'ping', 'spam', 'message', 'reminder'],
+    'Account & Trust':     ['ban', 'banned', 'shadow', 'account', 'login', 'privacy', 'data', 'report', 'support', 'unfair'],
+    'Upload & Quality':    ['upload', 'quality', 'blurry', 'resolution', 'audio', 'sound', 'video', 'export', 'compress'],
+}
+
+FEATURE_RECS = {
+    'Crashes & Bugs':      ('P0 — Stability', 'Fix crash loops and silent failures; add crash reporting with auto-retry.'),
+    'Performance':         ('P0 — Performance', 'Reduce battery drain; optimize cold-start and video load times.'),
+    'Ads & Monetisation':  ('P1 — Ad Experience', 'Cap ad frequency; add rewarded-ad opt-in; improve relevance targeting.'),
+    'Algorithm & Content': ('P1 — Discovery', 'Expose user controls for FYP tuning; improve cold-start for new users.'),
+    'UI & Design':         ('P2 — UX Polish', 'Audit post-update regressions; run usability tests before major rollouts.'),
+    'Notifications':       ('P2 — Notification UX', 'Add granular notification controls; respect OS-level "focus" modes.'),
+    'Account & Trust':     ('P1 — Trust & Safety', 'Improve shadow-ban transparency; add appeals flow; faster support SLA.'),
+    'Upload & Quality':    ('P2 — Creator Tools', 'Preserve upload resolution; improve in-app editing quality pipeline.'),
+}
+
 HTML = '''<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -62,6 +85,29 @@ HTML = '''<!DOCTYPE html>
     .result-score{font-size:.78rem;color:#aaa;margin-top:.3rem}
     .section-title{font-size:.8rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:.75rem}
     .wrapper{padding:0 1rem 3rem}
+
+    /* PM REPORT */
+    .report-card{background:#fff;border-radius:14px;border:1px solid #e8eaf0;box-shadow:0 2px 12px rgba(0,0,0,.05);padding:1.75rem;max-width:760px;margin:0 auto 1.5rem}
+    .report-header{display:flex;align-items:center;gap:.6rem;margin-bottom:1.2rem}
+    .report-header h2{font-size:1rem;font-weight:700;color:#1a1a2e}
+    .report-chip{background:#6c63ff;color:#fff;border-radius:99px;padding:.2rem .7rem;font-size:.72rem;font-weight:600;letter-spacing:.3px}
+    .theme-list{display:flex;flex-direction:column;gap:.75rem}
+    .theme-row{border-radius:10px;border:1px solid #e8eaf0;padding:.9rem 1rem;display:flex;gap:1rem;align-items:flex-start}
+    .theme-row.pain{border-left:3px solid #e53935}
+    .theme-row.positive{border-left:3px solid #43a047}
+    .theme-count{font-size:1.4rem;font-weight:800;color:#6c63ff;min-width:2rem;text-align:center;line-height:1}
+    .theme-info{flex:1}
+    .theme-name{font-size:.88rem;font-weight:700;color:#1a1a2e}
+    .theme-quotes{margin-top:.3rem;font-size:.78rem;color:#666;font-style:italic;line-height:1.45}
+    .rec-list{display:flex;flex-direction:column;gap:.75rem;margin-top:.25rem}
+    .rec-row{border-radius:10px;background:#fafafe;border:1px solid #e8eaf0;padding:.85rem 1rem;display:flex;gap:.9rem;align-items:flex-start}
+    .pri-badge{flex-shrink:0;padding:.2rem .55rem;border-radius:6px;font-size:.68rem;font-weight:700;letter-spacing:.3px}
+    .p0{background:#ffebee;color:#c62828}.p1{background:#fff3e0;color:#e65100}.p2{background:#e8f5e9;color:#2e7d32}
+    .rec-title{font-size:.85rem;font-weight:700;color:#1a1a2e}
+    .rec-desc{font-size:.78rem;color:#666;margin-top:.2rem;line-height:1.45}
+    .divider{border:none;border-top:1px solid #e8eaf0;margin:1.2rem 0}
+    .exec-summary{background:#f0eeff;border-radius:10px;padding:.9rem 1rem;font-size:.87rem;color:#2d2b55;line-height:1.55;margin-bottom:1.2rem}
+    .exec-summary strong{color:#4a3fbf}
   </style>
 </head>
 <body>
@@ -84,6 +130,7 @@ HTML = '''<!DOCTYPE html>
       <button class="btn" type="submit">Analyze Reviews</button>
     </form>
   </div>
+
   {% if results %}
   <div class="stats-grid">
     <div class="stat-card total"><div class="num">{{ total }}</div><div class="lbl">Reviews</div></div>
@@ -103,6 +150,60 @@ HTML = '''<!DOCTYPE html>
       <span><i class="dot dot-neg"></i> {{ counts.get("Negative", 0) }} Negative</span>
     </div>
   </div>
+
+  <!-- PM REPORT -->
+  <div class="report-card">
+    <div class="report-header">
+      <h2>PM Insight Report</h2>
+      <span class="report-chip">Auto-Generated</span>
+    </div>
+    <div class="exec-summary">{{ exec_summary }}</div>
+
+    {% if pain_themes %}
+    <div class="section-title">Top Pain Points</div>
+    <div class="theme-list" style="margin-bottom:1.2rem">
+      {% for theme, count, quotes in pain_themes %}
+      <div class="theme-row pain">
+        <div class="theme-count">{{ count }}</div>
+        <div class="theme-info">
+          <div class="theme-name">{{ theme }}</div>
+          <div class="theme-quotes">{{ quotes }}</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if pos_themes %}
+    <div class="section-title">What Users Love</div>
+    <div class="theme-list" style="margin-bottom:1.2rem">
+      {% for theme, count, quotes in pos_themes %}
+      <div class="theme-row positive">
+        <div class="theme-count">{{ count }}</div>
+        <div class="theme-info">
+          <div class="theme-name">{{ theme }}</div>
+          <div class="theme-quotes">{{ quotes }}</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <hr class="divider">
+    <div class="section-title">Feature Recommendations</div>
+    <div class="rec-list">
+      {% for pri_label, pri_class, title, desc in recommendations %}
+      <div class="rec-row">
+        <span class="pri-badge {{ pri_class }}">{{ pri_label }}</span>
+        <div>
+          <div class="rec-title">{{ title }}</div>
+          <div class="rec-desc">{{ desc }}</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
   <div class="card">
     <div class="section-title">Top Keywords</div>
     <div class="keywords">
@@ -111,6 +212,7 @@ HTML = '''<!DOCTYPE html>
       {% endfor %}
     </div>
   </div>
+
   <div class="results-list">
     <div class="section-title">Review Breakdown</div>
     {% for r in results %}
@@ -145,7 +247,62 @@ def analyze_review(text):
     tokens = tokenize_and_filter(cleaned)
     score = TextBlob(cleaned).sentiment.polarity
     label = 'Positive' if score > 0.1 else ('Negative' if score < -0.05 else 'Neutral')
-    return {'preview': text[:120] + ('...' if len(text) > 120 else ''), 'score': round(score, 3), 'label': label, 'tokens': tokens}
+    return {'preview': text[:120] + ('...' if len(text) > 120 else ''), 'score': round(score, 3), 'label': label, 'tokens': tokens, 'raw': text}
+
+
+def classify_themes(results):
+    """Map each review to pain themes and positive themes based on keyword overlap."""
+    pain_hits = Counter()   # theme -> count
+    pos_hits  = Counter()
+    pain_examples = {}      # theme -> [quote snippets]
+    pos_examples  = {}
+
+    for r in results:
+        tokens = set(r['tokens'])
+        raw_lower = r['raw'].lower()
+        for theme, keywords in PAIN_THEMES.items():
+            if any(k in tokens or k in raw_lower for k in keywords):
+                if r['label'] == 'Negative':
+                    pain_hits[theme] += 1
+                    pain_examples.setdefault(theme, []).append(r['raw'][:70])
+                elif r['label'] == 'Positive':
+                    pos_hits[theme] += 1
+                    pos_examples.setdefault(theme, []).append(r['raw'][:70])
+
+    pain_themes = [(t, c, '" ' + pain_examples[t][0] + '…"') for t, c in pain_hits.most_common(4) if c > 0]
+    pos_themes  = [(t, c, '" ' + pos_examples[t][0]  + '…"') for t, c in pos_hits.most_common(3)  if c > 0]
+    return pain_themes, pos_themes
+
+
+def build_recommendations(pain_themes, pos_themes):
+    seen = set()
+    recs = []
+    for theme, _, _ in pain_themes:
+        if theme in FEATURE_RECS and theme not in seen:
+            label, desc = FEATURE_RECS[theme]
+            pri = label.split(' — ')[0]
+            title = label.split(' — ')[1]
+            css = {'P0': 'p0', 'P1': 'p1', 'P2': 'p2'}.get(pri, 'p2')
+            recs.append((pri, css, title, desc))
+            seen.add(theme)
+    # sort P0 first
+    recs.sort(key=lambda x: x[0])
+    return recs
+
+
+def build_exec_summary(results, counts, pain_themes, pos_themes, avg_score):
+    total = len(results)
+    neg_n = counts.get('Negative', 0)
+    pos_n = counts.get('Positive', 0)
+    sentiment_word = 'predominantly negative' if avg_score < -0.05 else ('mixed' if avg_score < 0.15 else 'broadly positive')
+    top_pain = pain_themes[0][0] if pain_themes else 'general usability'
+    top_pos  = pos_themes[0][0]  if pos_themes  else 'core experience'
+    return (
+        f"Across {total} reviews, sentiment is {sentiment_word} (avg polarity {avg_score:+.2f}). "
+        f"<strong>{neg_n} negative reviews</strong> cluster around <strong>{top_pain}</strong> — the highest-signal pain area. "
+        f"<strong>{pos_n} positive reviews</strong> highlight <strong>{top_pos}</strong> as the product's strongest asset. "
+        f"Immediate attention should focus on P0 stability and performance issues before investing further in growth features."
+    )
 
 
 @app.route('/', methods=['GET'])
@@ -167,9 +324,16 @@ def analyze():
     pos_pct = round(counts.get('Positive', 0) / len(results) * 100)
     neg_pct = round(counts.get('Negative', 0) / len(results) * 100)
     neu_pct = round(counts.get('Neutral', 0) / len(results) * 100)
+
+    pain_themes, pos_themes = classify_themes(results)
+    recommendations = build_recommendations(pain_themes, pos_themes)
+    exec_summary = build_exec_summary(results, counts, pain_themes, pos_themes, avg_score)
+
     return render_template_string(HTML, results=results, counts=counts, top_keywords=top_keywords,
                                   avg_score=avg_score, total=len(results),
-                                  pos_pct=pos_pct, neg_pct=neg_pct, neu_pct=neu_pct, raw=raw)
+                                  pos_pct=pos_pct, neg_pct=neg_pct, neu_pct=neu_pct, raw=raw,
+                                  pain_themes=pain_themes, pos_themes=pos_themes,
+                                  recommendations=recommendations, exec_summary=exec_summary)
 
 
 if __name__ == '__main__':
