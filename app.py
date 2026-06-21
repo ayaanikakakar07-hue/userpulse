@@ -157,7 +157,7 @@ HTML = '''<!DOCTYPE html>
       <h2>PM Insight Report</h2>
       <span class="report-chip">Auto-Generated</span>
     </div>
-    <div class="exec-summary">{{ exec_summary }}</div>
+    <div class="exec-summary">{{ exec_summary | safe }}</div>
 
     {% if pain_themes %}
     <div class="section-title">Top Pain Points</div>
@@ -260,8 +260,9 @@ def classify_themes(results):
     for r in results:
         tokens = set(r['tokens'])
         raw_lower = r['raw'].lower()
+        raw_words = set(re.split(r'\W+', raw_lower))
         for theme, keywords in PAIN_THEMES.items():
-            if any(k in tokens or k in raw_lower for k in keywords):
+            if any(k in tokens or k in raw_words for k in keywords):
                 if r['label'] == 'Negative':
                     pain_hits[theme] += 1
                     pain_examples.setdefault(theme, []).append(r['raw'][:70])
