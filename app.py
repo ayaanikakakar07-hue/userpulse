@@ -1,5 +1,6 @@
 from flask import Flask, render_template_string, request
 import re
+import json
 import nltk
 from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
@@ -15,7 +16,6 @@ app = Flask(__name__)
 stop_words = set(stopwords.words('english'))
 lemmatizer = WordNetLemmatizer()
 
-# Pain point theme taxonomy
 PAIN_THEMES = {
     'Crashes & Bugs':      ['crash', 'bug', 'freeze', 'error', 'broken', 'glitch', 'fix', 'issue', 'problem', 'malfunction'],
     'Performance':         ['slow', 'lag', 'load', 'loading', 'battery', 'drain', 'speed', 'fast', 'quick', 'delay'],
@@ -44,6 +44,7 @@ HTML = '''<!DOCTYPE html>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>UserPulse — App Review Sentiment Analyzer</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
   <style>
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
     body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f7f8fc;color:#1a1a2e;min-height:100vh}
@@ -68,6 +69,15 @@ HTML = '''<!DOCTYPE html>
     .stat-card .num{font-size:1.8rem;font-weight:800;line-height:1}
     .stat-card .lbl{font-size:.75rem;color:#888;margin-top:.3rem;text-transform:uppercase;letter-spacing:.4px}
     .positive .num{color:#2e7d32}.negative .num{color:#c62828}.neutral .num{color:#e65100}.total .num{color:#6c63ff}
+
+    /* DASHBOARD CHARTS */
+    .dashboard{max-width:760px;margin:0 auto 1.5rem;display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+    .chart-card{background:#fff;border-radius:14px;border:1px solid #e8eaf0;box-shadow:0 2px 12px rgba(0,0,0,.05);padding:1.25rem}
+    .chart-card.full{grid-column:1/-1}
+    .chart-title{font-size:.78rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:1rem}
+    .chart-wrap{position:relative;height:200px;display:flex;align-items:center;justify-content:center}
+    .chart-wrap-tall{position:relative;height:240px}
+
     .bar-wrap{max-width:760px;margin:0 auto 1.5rem}
     .bar-track{height:10px;border-radius:99px;background:#f0f0f5;overflow:hidden;display:flex}
     .bar-pos{background:#43a047;height:100%}.bar-neg{background:#e53935;height:100%}.bar-neu{background:#fb8c00;height:100%}
@@ -85,8 +95,6 @@ HTML = '''<!DOCTYPE html>
     .result-score{font-size:.78rem;color:#aaa;margin-top:.3rem}
     .section-title{font-size:.8rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:.75rem}
     .wrapper{padding:0 1rem 3rem}
-
-    /* PM REPORT */
     .report-card{background:#fff;border-radius:14px;border:1px solid #e8eaf0;box-shadow:0 2px 12px rgba(0,0,0,.05);padding:1.75rem;max-width:760px;margin:0 auto 1.5rem}
     .report-header{display:flex;align-items:center;gap:.6rem;margin-bottom:1.2rem}
     .report-header h2{font-size:1rem;font-weight:700;color:#1a1a2e}
@@ -138,16 +146,26 @@ HTML = '''<!DOCTYPE html>
     <div class="stat-card negative"><div class="num">{{ neg_pct }}%</div><div class="lbl">Negative</div></div>
     <div class="stat-card neutral"><div class="num">{{ avg_score }}</div><div class="lbl">Avg Score</div></div>
   </div>
-  <div class="bar-wrap">
-    <div class="bar-track">
-      <div class="bar-pos" style="width:{{ pos_pct }}%"></div>
-      <div class="bar-neu" style="width:{{ neu_pct }}%"></div>
-      <div class="bar-neg" style="width:{{ neg_pct }}%"></div>
+
+  <!-- DASHBOARD CHARTS -->
+  <div class="dashboard">
+    <div class="chart-card">
+      <div class="chart-title">Sentiment Distribution</div>
+      <div class="chart-wrap">
+        <canvas id="sentimentDonut"></canvas>
+      </div>
     </div>
-    <div class="bar-legend">
-      <span><i class="dot dot-pos"></i> {{ counts.get("Positive", 0) }} Positive</span>
-      <span><i class="dot dot-neu"></i> {{ counts.get("Neutral", 0) }} Neutral</span>
-      <span><i class="dot dot-neg"></i> {{ counts.get("Negative", 0) }} Negative</span>
+    <div class="chart-card">
+      <div class="chart-title">Pain Point Frequency</div>
+      <div class="chart-wrap">
+        <canvas id="painBar"></canvas>
+      </div>
+    </div>
+    <div class="chart-card full">
+      <div class="chart-title">Top Keywords</div>
+      <div class="chart-wrap-tall">
+        <canvas id="keywordBar"></canvas>
+      </div>
     </div>
   </div>
 
@@ -204,15 +222,6 @@ HTML = '''<!DOCTYPE html>
     </div>
   </div>
 
-  <div class="card">
-    <div class="section-title">Top Keywords</div>
-    <div class="keywords">
-      {% for word, count in top_keywords %}
-      <span class="kw">{{ word }} <strong>{{ count }}</strong></span>
-      {% endfor %}
-    </div>
-  </div>
-
   <div class="results-list">
     <div class="section-title">Review Breakdown</div>
     {% for r in results %}
@@ -225,6 +234,105 @@ HTML = '''<!DOCTYPE html>
     </div>
     {% endfor %}
   </div>
+
+  <script>
+    // Data injected from Flask
+    const sentimentData = {
+      positive: {{ counts.get("Positive", 0) }},
+      neutral:  {{ counts.get("Neutral", 0) }},
+      negative: {{ counts.get("Negative", 0) }}
+    };
+    const painData = {{ pain_chart_data | safe }};
+    const keywordData = {{ keyword_chart_data | safe }};
+
+    // 1. Sentiment Donut
+    new Chart(document.getElementById('sentimentDonut'), {
+      type: 'doughnut',
+      data: {
+        labels: ['Positive', 'Neutral', 'Negative'],
+        datasets: [{
+          data: [sentimentData.positive, sentimentData.neutral, sentimentData.negative],
+          backgroundColor: ['#43a047', '#fb8c00', '#e53935'],
+          borderWidth: 2,
+          borderColor: '#fff'
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '65%',
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: { font: { size: 11 }, padding: 12, boxWidth: 12 }
+          }
+        }
+      }
+    });
+
+    // 2. Pain Point Horizontal Bar
+    if (painData.labels.length > 0) {
+      new Chart(document.getElementById('painBar'), {
+        type: 'bar',
+        data: {
+          labels: painData.labels,
+          datasets: [{
+            label: 'Mentions',
+            data: painData.values,
+            backgroundColor: 'rgba(229, 57, 53, 0.15)',
+            borderColor: '#e53935',
+            borderWidth: 1.5,
+            borderRadius: 4
+          }]
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: {
+              beginAtZero: true,
+              ticks: { stepSize: 1, font: { size: 10 } },
+              grid: { color: '#f0f0f5' }
+            },
+            y: { ticks: { font: { size: 10 } }, grid: { display: false } }
+          }
+        }
+      });
+    } else {
+      document.getElementById('painBar').parentElement.innerHTML = '<p style="color:#aaa;font-size:.82rem;text-align:center;padding-top:60px">No pain points detected</p>';
+    }
+
+    // 3. Keyword Bar
+    new Chart(document.getElementById('keywordBar'), {
+      type: 'bar',
+      data: {
+        labels: keywordData.labels,
+        datasets: [{
+          label: 'Frequency',
+          data: keywordData.values,
+          backgroundColor: 'rgba(108, 99, 255, 0.15)',
+          borderColor: '#6c63ff',
+          borderWidth: 1.5,
+          borderRadius: 4
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { font: { size: 10 } }, grid: { display: false } },
+          y: {
+            beginAtZero: true,
+            ticks: { stepSize: 1, font: { size: 10 } },
+            grid: { color: '#f0f0f5' }
+          }
+        }
+      }
+    });
+  </script>
   {% endif %}
 </div>
 </body>
@@ -251,16 +359,13 @@ def analyze_review(text):
 
 
 def classify_themes(results):
-    """Map each review to pain themes and positive themes based on keyword overlap."""
-    pain_hits = Counter()   # theme -> count
+    pain_hits = Counter()
     pos_hits  = Counter()
-    pain_examples = {}      # theme -> [quote snippets]
+    pain_examples = {}
     pos_examples  = {}
-
     for r in results:
         tokens = set(r['tokens'])
-        raw_lower = r['raw'].lower()
-        raw_words = set(re.split(r'\W+', raw_lower))
+        raw_words = set(re.split(r'\W+', r['raw'].lower()))
         for theme, keywords in PAIN_THEMES.items():
             if any(k in tokens or k in raw_words for k in keywords):
                 if r['label'] == 'Negative':
@@ -269,7 +374,6 @@ def classify_themes(results):
                 elif r['label'] == 'Positive':
                     pos_hits[theme] += 1
                     pos_examples.setdefault(theme, []).append(r['raw'][:70])
-
     pain_themes = [(t, c, '" ' + pain_examples[t][0] + '…"') for t, c in pain_hits.most_common(4) if c > 0]
     pos_themes  = [(t, c, '" ' + pos_examples[t][0]  + '…"') for t, c in pos_hits.most_common(3)  if c > 0]
     return pain_themes, pos_themes
@@ -286,7 +390,6 @@ def build_recommendations(pain_themes, pos_themes):
             css = {'P0': 'p0', 'P1': 'p1', 'P2': 'p2'}.get(pri, 'p2')
             recs.append((pri, css, title, desc))
             seen.add(theme)
-    # sort P0 first
     recs.sort(key=lambda x: x[0])
     return recs
 
@@ -330,11 +433,31 @@ def analyze():
     recommendations = build_recommendations(pain_themes, pos_themes)
     exec_summary = build_exec_summary(results, counts, pain_themes, pos_themes, avg_score)
 
+    # Chart data for JS
+    all_pain = Counter()
+    for r in results:
+        tokens = set(r['tokens'])
+        raw_words = set(re.split(r'\W+', r['raw'].lower()))
+        for theme, keywords in PAIN_THEMES.items():
+            if any(k in tokens or k in raw_words for k in keywords):
+                all_pain[theme] += 1
+    top_pain_all = all_pain.most_common(6)
+    pain_chart_data = json.dumps({
+        'labels': [t for t, _ in top_pain_all],
+        'values': [c for _, c in top_pain_all]
+    })
+    keyword_chart_data = json.dumps({
+        'labels': [w for w, _ in top_keywords],
+        'values': [c for _, c in top_keywords]
+    })
+
     return render_template_string(HTML, results=results, counts=counts, top_keywords=top_keywords,
                                   avg_score=avg_score, total=len(results),
                                   pos_pct=pos_pct, neg_pct=neg_pct, neu_pct=neu_pct, raw=raw,
                                   pain_themes=pain_themes, pos_themes=pos_themes,
-                                  recommendations=recommendations, exec_summary=exec_summary)
+                                  recommendations=recommendations, exec_summary=exec_summary,
+                                  pain_chart_data=pain_chart_data,
+                                  keyword_chart_data=keyword_chart_data)
 
 
 if __name__ == '__main__':
